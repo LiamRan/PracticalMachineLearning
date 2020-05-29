@@ -1,0 +1,175 @@
+---
+title: "Practical Machine Learning"
+author: "William Tai"
+date: "5/29/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+### 1. Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit, it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+The purpose of this project is to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in five different ways. Class A corresponds to the specified execution of the exercises while the other four classes correspond to common mistakes. The four incorrect classes are:
+
+1. Throwing the elbows to the front (Class B)
+2. Lifting the dumbbell only halfway (Class C)
+3. Lowering the dumbbell only halfway (Class D) 
+4. Throwing the hips to the front (Class E)
+
+This report will explain:
+
+1. strategy of building a model.
+2. Usage of cross validation.
+3. Expected sample error.
+4. Reasons for the model choice.
+
+The prediction model is used to predict 20 different test cases.
+
+### 2. Preprocessing the data
+
+The training and testing sets are downloaded. The training set will be used to develop the prediction model for this project. The testing set will be used to predict 20 different test cases. The "classe" variable is an outcome for both sets.
+```{r, message = FALSE}
+library(data.table) # Library required for retrieving the data sets
+
+# Training set - used for developing the predcition model
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileUrl, destfile = "pml-training.csv")
+pml.training <- read.csv("pml-training.csv")
+
+# Testing set - used for the prediction
+fileUrl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileUrl2, destfile="pml-testing.csv")
+pml.testing <- read.csv("pml-testing.csv")
+```
+
+The dimensions of both training and testing sets were checked. Both sets contain a total of 160 column variables.
+```{r, results = 'hide'}
+dim(pml.training)  # This shows 19622 observations
+dim(pml.testing)   # This shows 20 observations. We will use this data set for the prediction model
+```
+
+The following code identifies and removes variable columns that contain NA values from the training and testing sets.
+```{r, results = "hide"}
+missing <- colSums(is.na(pml.training))
+print(missing[missing > 0])                    
+# A total of 67 column variables were identified
+# There were 19216 'NA' observations for each variable.
+
+pml.training <- pml.training[missing == 0]     
+pml.testing <- pml.testing[missing == 0]
+```
+
+Additional variables are determined to be irrelevant. Thus, they are removed from the training and testing sets.
+```{r, message = FALSE}
+# The following codes removed the first five column variables from the sets
+pml.training <- pml.training[, -which(names(pml.training) %in% 
+                                      c("X", "user_name", "raw_timestamp_part_1", 
+                                        "raw_timestamp_part_2", "cvtd_timestamp"))]
+pml.testing <- pml.testing[, -which(names(pml.testing) %in% 
+                                      c("X", "user_name", "raw_timestamp_part_1", 
+                                        "raw_timestamp_part_2", "cvtd_timestamp"))]
+
+library(caret) # This library is required for the nearZeroVar function()
+nsv <- nearZeroVar(pml.training, saveMetrics = FALSE)  
+
+# A total of 59 column variables were identified and removed from the training and testing sets.
+pml.training <- pml.training[, -nsv]
+pml.testing <- pml.testing[, -nsv]
+```
+
+The training set is partitioned into 70% training and 30% testing sets.
+```{r}
+set.seed(2020)
+inTrain <- createDataPartition(y = pml.training$classe, p = 0.7, list = FALSE)
+training <- pml.training[inTrain,]
+testing <- pml.training[-inTrain,]
+```
+
+New dimensions of these partitioned sets are shown below.
+```{r}
+dim(training)
+dim(testing)
+```
+
+### 3. Building the models
+
+This project focuses on three models: Random forest, gradient boosting, and recursive Partitioning and Regression Tree. The partitioned sets are used for these models. The prediction model will be selected based on high accuracy.
+
+### 3.1. Random Forest model
+
+The code for the random forest model and results are given below.
+```{r, message = FALSE}
+library(randomForest)   # Library required to build the Random Forest model
+modFitRF <- randomForest(classe~., data = training)
+modFitRF.pred <- predict(modFitRF, newdata = testing)
+RF.CM <- confusionMatrix(testing$classe, modFitRF.pred)
+RF.CM
+```
+
+### 3.2. Gradient boosting model
+
+The code for the gradient boosting and results are given below.
+```{r, message = FALSE}
+#Gradient Boosting
+modFitGBM <- train(classe~., data = training, method = "gbm", verbose = F,
+                   trControl = trainControl(method = "cv", number = 5, allowParallel=T))
+                                          # Cross validation with five folds.
+modFitGBM.pred <- predict(modFitGBM, newdata = testing)
+GBM.CM <- confusionMatrix(testing$classe, modFitGBM.pred)
+GBM.CM
+```
+
+### 3.3. Recursive Partitioning and Regression Tree
+
+The code and dentigram are given below for recursive partitioning and regression tree
+```{r, message = FALSE, warning = FALSE}
+#Rpart (classification tree)
+modFitRpart <- train(classe~., data = training, method = "rpart",
+                     trControl = trainControl(method = "none"),
+                     tuneGrid = data.frame(cp = 0.01))
+                   # cp is a complexity parameter used to control the size of the decision tree 
+                   # and to select the optimal tree size.
+library(rattle)
+fancyRpartPlot(modFitRpart$finalModel)
+```
+
+The result is given below.
+```{r}
+modFitRpart.pred <- predict(modFitRpart, newdata = testing)
+Rpart.CM <- confusionMatrix(testing$classe, modFitRpart.pred)
+Rpart.CM
+```
+
+### 4. Conclusion
+
+The accuracies of the models are given below.
+```{r, echo = FALSE}
+cat("Accuracies of the models\nRandom Forest:",RF.CM$overall[1],
+    "\nGradient Boosting:", GBM.CM$overall[1],
+    "\nClassification Forest:", Rpart.CM$overall[1])
+```
+The random forest model yields the highest accuracy. Thus, this model is selected as the prediction model for this project.
+
+### 5. Prediction
+
+Using the testing set, the 20 different cases are predicted.
+```{r}
+predict.test <- predict(modFitRF, newdata = pml.testing)
+predict.test
+```
+
+### Additional notes:
+
+1. The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har
+
+2. The train() function can be used for Random Forest Model using method = "rf". Because it takes a long time to run the train() function, the randomForest() function is used for this project instead.
+
+3. The rpart() function is also available for the classification tree. Both rpart() and train() will yield similar results. The default of the complexity parameter (cp) for the rpart() function is 0.01. The 'cp' value should be set to 0.01 for the train() function. The code for the rpart() function is given below.
+```{r, message = FALSE, results = "hide", eval = FALSE}
+library(rpart)
+modFitRpart2 <- rpart(classe~., data = training)
+library(rattle)
+fancyRpartPlot(modFitRpart2)
+```
